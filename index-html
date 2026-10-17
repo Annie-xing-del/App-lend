@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>點名紀錄系統</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1 class="title">點名紀錄系統</h1>
+      <p class="subtitle">簡單記錄每堂課的出席狀況。</p>
+    </header>
+
+    <section class="subjects" aria-label="科目">
+      <div class="subject">國文</div>
+      <div class="subject">數學</div>
+      <div class="subject">英文</div>
+    </section>
+
+    <p class="notice">上課後五分鐘點名,之後一律算遲到或缺席。</p>
+  </main>
+
+  <script>
+    // 之後的 JavaScript 寫在這裡
+  </script>
+</body>
+</html>
