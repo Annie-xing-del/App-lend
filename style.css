@@ -123,6 +123,12 @@ body {
   .title {
     font-size: 1.6rem;
   }
+  @media (max-width: 380px) {
+  .nav-list a {
+    font-size: 0.85rem;
+  }
+  /* 其餘原本的規則不變 */
+}
 
   .subject {
     padding: 20px 4px;
