@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登入</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar" aria-label="主選單">
+    <ul class="nav-list">
+      <li><a href="index.html">首頁</a></li>
+      <li><a href="student.html">學生管理</a></li>
+      <li><a href="leave.html">請假狀況</a></li>
+      <li><a href="attend.html">點名統計</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    <header class="header">
+      <h1 class="title">登入</h1>
+    </header>
+
+    <form id="login-form" class="login-form">
+      <div class="field">
+        <label for="email">電子郵件</label>
+        <input type="email" id="email" autocomplete="email" required>
+      </div>
+
+      <div class="field">
+        <label for="password">密碼</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+
+      <p id="message" class="form-message" role="alert"></p>
+
+      <button type="submit" id="submit-btn" class="btn">登入</button>
+    </form>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+  <script>
+    // 到 Supabase 專案的 Project Settings → API 複製這兩個值
+    const SUPABASE_URL = '貼上你的 Project URL';
+    const SUPABASE_ANON_KEY = '貼上你的 anon public key';
+
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const form = document.getElementById('login-form');
+    const message = document.getElementById('message');
+    const submitBtn = document.getElementById('submit-btn');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      message.textContent = '';
+      submitBtn.disabled = true;
+      submitBtn.textContent = '登入中…';
+
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      const { error } = await client.auth.signInWithPassword({ email, password });
+
+      if (error) {
+        message.textContent = '登入失敗,請確認電子郵件與密碼是否正確。';
+        submitBtn.disabled = false;
+        submitBtn.textContent = '登入';
+        return;
+      }
+
+      window.location.href = 'index.html';
+    });
+  </script>
+</body>
+</html>
