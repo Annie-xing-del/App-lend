@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>請假狀況</title>
-  <li><a href="login.html">登入</a></li>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,6 +13,7 @@
       <li><a href="student.html">學生管理</a></li>
       <li><a href="leave.html" class="active" aria-current="page">請假狀況</a></li>
       <li><a href="attend.html">點名統計</a></li>
+      <li><a href="login.html">登入</a></li>
     </ul>
   </nav>
 
@@ -21,10 +21,235 @@
     <header class="header">
       <h1 class="title">請假狀況</h1>
     </header>
+
+    <p id="login-notice" class="notice" hidden>請先<a href="login.html">登入</a>才能查看請假狀況。</p>
+    <p id="no-student-notice" class="notice" hidden>這個帳號尚未綁定學生資料,請聯絡管理者。</p>
+
+    <section id="form-section" hidden>
+      <h2 class="section-title">申請請假</h2>
+      <form id="leave-form" class="leave-form">
+        <div class="field">
+          <label for="leave-type">假別</label>
+          <select id="leave-type" required>
+            <option value="">請選擇</option>
+            <option value="病假">病假</option>
+            <option value="喪假">喪假</option>
+            <option value="事假">事假</option>
+            <option value="產假">產假</option>
+            <option value="生理假">生理假</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="start-date">開始日期</label>
+          <input type="date" id="start-date" required>
+        </div>
+
+        <div class="field">
+          <label for="end-date">結束日期</label>
+          <input type="date" id="end-date" required>
+        </div>
+
+        <div class="field">
+          <label for="reason">事由(選填)</label>
+          <textarea id="reason" maxlength="200"></textarea>
+          <span class="hint">請勿填寫詳細病情或個人隱私。</span>
+        </div>
+
+        <p id="form-message" class="form-message" role="alert"></p>
+
+        <button type="submit" id="submit-btn" class="btn">送出申請</button>
+      </form>
+    </section>
+
+    <section id="list-section" hidden>
+      <h2 class="section-title">請假紀錄</h2>
+      <div id="leave-list" class="leave-list"></div>
+    </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
   <script>
-    // 之後的 JavaScript 寫在這裡
+    // 與 login.html 使用相同的兩個值
+    const SUPABASE_URL = 'https://zoofbszlzicacihflncw.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable__pvkcnKQJrwuy-NSQwmN-A_3D7b5X4A';
+
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const loginNotice = document.getElementById('login-notice');
+    const noStudentNotice = document.getElementById('no-student-notice');
+    const formSection = document.getElementById('form-section');
+    const listSection = document.getElementById('list-section');
+    const form = document.getElementById('leave-form');
+    const formMessage = document.getElementById('form-message');
+    const submitBtn = document.getElementById('submit-btn');
+    const listEl = document.getElementById('leave-list');
+
+    const BADGE_CLASS = { '待審核': 'pending', '核准': 'approved', '駁回': 'rejected' };
+
+    let currentUser = null;
+    let isAdmin = false;
+    let myStudentId = null;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function renderCard(item) {
+      const card = el('div', 'leave-card');
+
+      const range = item.start_date === item.end_date
+        ? item.start_date
+        : item.start_date + ' ~ ' + item.end_date;
+
+      const top = el('div', 'leave-top');
+      const title = isAdmin && item.students
+        ? item.students.name + '(' + item.students.student_no + ')'
+        : item.leave_type;
+      top.appendChild(el('span', 'leave-student', title));
+      top.appendChild(el('span', 'badge ' + (BADGE_CLASS[item.status] || ''), item.status));
+      card.appendChild(top);
+
+      const meta = isAdmin ? item.leave_type + '|' + range : range;
+      card.appendChild(el('div', 'leave-meta', meta));
+
+      if (item.reason) {
+        card.appendChild(el('div', 'leave-reason', '事由:' + item.reason));
+      }
+
+      if (isAdmin && item.status === '待審核') {
+        const actions = el('div', 'leave-actions');
+
+        const approveBtn = el('button', 'btn btn-small', '核准');
+        approveBtn.type = 'button';
+        approveBtn.addEventListener('click', () => review(item.id, '核准'));
+
+        const rejectBtn = el('button', 'btn btn-small btn-danger', '駁回');
+        rejectBtn.type = 'button';
+        rejectBtn.addEventListener('click', () => review(item.id, '駁回'));
+
+        actions.appendChild(approveBtn);
+        actions.appendChild(rejectBtn);
+        card.appendChild(actions);
+      }
+
+      return card;
+    }
+
+    async function loadLeaves() {
+      listEl.replaceChildren(el('p', 'empty', '載入中…'));
+
+      const { data, error } = await client
+        .from('leaves')
+        .select('id, leave_type, start_date, end_date, reason, status, students(student_no, name)')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        listEl.replaceChildren(el('p', 'empty', '讀取失敗,請稍後再試。'));
+        return;
+      }
+
+      if (!data.length) {
+        listEl.replaceChildren(el('p', 'empty', '目前沒有請假紀錄。'));
+        return;
+      }
+
+      listEl.replaceChildren(...data.map(renderCard));
+    }
+
+    async function review(id, status) {
+      const { error } = await client
+        .from('leaves')
+        .update({
+          status: status,
+          reviewed_by: currentUser.id,
+          reviewed_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .eq('status', '待審核');
+
+      if (error) {
+        alert('操作失敗,請稍後再試。');
+        return;
+      }
+      loadLeaves();
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      formMessage.className = 'form-message';
+      formMessage.textContent = '';
+
+      const leaveType = document.getElementById('leave-type').value;
+      const startDate = document.getElementById('start-date').value;
+      const endDate = document.getElementById('end-date').value;
+      const reason = document.getElementById('reason').value.trim();
+
+      if (endDate < startDate) {
+        formMessage.textContent = '結束日期不能早於開始日期。';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = '送出中…';
+
+      const { error } = await client.from('leaves').insert({
+        student_id: myStudentId,
+        leave_type: leaveType,
+        start_date: startDate,
+        end_date: endDate,
+        reason: reason || null
+      });
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出申請';
+
+      if (error) {
+        formMessage.textContent = '送出失敗,請稍後再試。';
+        return;
+      }
+
+      form.reset();
+      formMessage.className = 'form-message success';
+      formMessage.textContent = '已送出,等待審核。';
+      loadLeaves();
+    });
+
+    async function init() {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session) {
+        loginNotice.hidden = false;
+        return;
+      }
+      currentUser = session.user;
+
+      const { data: adminFlag } = await client.rpc('is_admin');
+      isAdmin = adminFlag === true;
+
+      const { data: me } = await client
+        .from('students')
+        .select('id')
+        .eq('user_id', currentUser.id)
+        .maybeSingle();
+
+      if (me) {
+        myStudentId = me.id;
+        formSection.hidden = false;
+      }
+
+      if (!isAdmin && !myStudentId) {
+        noStudentNotice.hidden = false;
+        return;
+      }
+
+      listSection.hidden = false;
+      loadLeaves();
+    }
+
+    init();
   </script>
 </body>
 </html>
