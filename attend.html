@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>點名統計</title>
-  <li><a href="login.html">登入</a></li>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,6 +13,7 @@
       <li><a href="student.html">學生管理</a></li>
       <li><a href="leave.html">請假狀況</a></li>
       <li><a href="attend.html" class="active" aria-current="page">點名統計</a></li>
+      <li><a href="login.html">登入</a></li>
     </ul>
   </nav>
 
@@ -21,10 +21,382 @@
     <header class="header">
       <h1 class="title">點名統計</h1>
     </header>
+
+    <section class="rules" aria-label="點名規則">
+      <strong>點名規則(從老師按下「開始點名」起算)</strong>
+      <ul>
+        <li>出席:5 分鐘內,可勾選「已出席」</li>
+        <li>遲到:5 分鐘後到 15 分鐘內,可勾選「遲到」</li>
+        <li>曠課:15 分鐘後到 20 分鐘內,可勾選「曠課」</li>
+        <li>缺席:上課 20 分鐘後,尚未點名者記為「缺席」,不能再勾選</li>
+      </ul>
+      <p class="rule-note">無故翹課且沒有請假者,直接記為缺席。</p>
+    </section>
+
+    <p id="login-notice" class="notice" hidden>請先<a href="login.html">登入</a>才能查看點名紀錄。</p>
+    <p id="no-student-notice" class="notice" hidden>這個帳號尚未綁定學生資料,請聯絡管理者。</p>
+
+    <section id="admin-section" hidden>
+      <h2 class="section-title">開始點名</h2>
+      <div class="roll-toolbar">
+        <div class="field">
+          <label for="class-select">班級</label>
+          <select id="class-select">
+            <option value="">請選擇</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="subject-select">科目</label>
+          <select id="subject-select">
+            <option value="">請選擇</option>
+            <option value="國文">國文</option>
+            <option value="數學">數學</option>
+            <option value="英文">英文</option>
+          </select>
+        </div>
+
+        <p id="start-message" class="form-message" role="alert"></p>
+
+        <button type="button" id="start-btn" class="btn">開始點名</button>
+      </div>
+
+      <div id="roll-panel" hidden>
+        <h2 class="section-title">點名名單</h2>
+        <p id="roll-status" class="roll-status"></p>
+        <div id="student-list" class="student-list"></div>
+      </div>
+    </section>
+
+    <section id="my-section" hidden>
+      <h2 class="section-title">我的點名紀錄</h2>
+      <div id="my-list" class="leave-list"></div>
+    </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
   <script>
-    // 之後的 JavaScript 寫在這裡
+    // 與 login.html 使用相同的兩個值
+    const SUPABASE_URL = 'https://zoofbszlzicacihflncw.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable__pvkcnKQJrwuy-NSQwmN-A_3D7b5X4A';
+
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const loginNotice = document.getElementById('login-notice');
+    const noStudentNotice = document.getElementById('no-student-notice');
+    const adminSection = document.getElementById('admin-section');
+    const mySection = document.getElementById('my-section');
+    const classSelect = document.getElementById('class-select');
+    const subjectSelect = document.getElementById('subject-select');
+    const startBtn = document.getElementById('start-btn');
+    const startMsg = document.getElementById('start-message');
+    const rollPanel = document.getElementById('roll-panel');
+    const statusEl = document.getElementById('roll-status');
+    const studentListEl = document.getElementById('student-list');
+    const myListEl = document.getElementById('my-list');
+
+    // 各階段(依「開始點名」後經過的分鐘數)
+    const PHASE_END = { present: 5, late: 15, truant: 20 };
+    const PHASE_TEXT = {
+      present: '目前可勾選:已出席',
+      late: '目前可勾選:遲到',
+      truant: '目前可勾選:曠課',
+      closed: '點名已結束,未點名的學生已記為缺席'
+    };
+    const OPTIONS = [
+      { status: '出席', label: '已出席', phase: 'present' },
+      { status: '遲到', label: '遲到', phase: 'late' },
+      { status: '曠課', label: '曠課', phase: 'truant' }
+    ];
+    const BADGE = { '出席': 'approved', '遲到': 'pending', '曠課': 'rejected', '缺席': 'rejected', '請假': 'leave' };
+    const STATUS_LABEL = { '出席': '已出席' };
+
+    let isAdmin = false;
+    let offset = 0; // 伺服器時間與本機時間的差
+    let rollCall = null;
+    let students = [];
+    let statusMap = {};
+    let lastPhase = null;
+    let finalizing = false;
+    let timerId = null;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function nowMs() {
+      return Date.now() + offset;
+    }
+
+    function elapsedMin() {
+      return (nowMs() - new Date(rollCall.started_at).getTime()) / 60000;
+    }
+
+    function getPhase(minutes) {
+      if (minutes < 5) return 'present';
+      if (minutes < 15) return 'late';
+      if (minutes < 20) return 'truant';
+      return 'closed';
+    }
+
+    function fmt(seconds) {
+      const s = Math.max(0, Math.ceil(seconds));
+      return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    }
+
+    async function syncClock() {
+      const { data } = await client.rpc('server_now');
+      if (data) offset = new Date(data).getTime() - Date.now();
+    }
+
+    function stopTimer() {
+      if (timerId) clearInterval(timerId);
+      timerId = null;
+    }
+
+    function renderRows(phase) {
+      if (!students.length) {
+        studentListEl.replaceChildren(el('p', 'empty', '這個班級目前沒有在籍學生。'));
+        return;
+      }
+
+      studentListEl.replaceChildren(...students.map((s) => {
+        const row = el('div', 'student-row');
+        row.appendChild(el('span', 'student-name', s.name + '(' + s.student_no + ')'));
+
+        const status = statusMap[s.id];
+        if (status) {
+          row.appendChild(el('span', 'badge ' + (BADGE[status] || ''), STATUS_LABEL[status] || status));
+        } else if (phase !== 'closed') {
+          const group = el('div', 'check-group');
+          OPTIONS.forEach((opt) => {
+            const label = el('label');
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.disabled = opt.phase !== phase;
+            if (box.disabled) label.className = 'disabled';
+            box.addEventListener('change', () => mark(s.id, opt.status, box));
+            label.appendChild(box);
+            label.appendChild(document.createTextNode(opt.label));
+            group.appendChild(label);
+          });
+          row.appendChild(group);
+        }
+        return row;
+      }));
+    }
+
+    async function loadAttendance() {
+      const { data } = await client
+        .from('attendance')
+        .select('student_id, status')
+        .eq('roll_call_id', rollCall.id);
+      statusMap = {};
+      (data || []).forEach((r) => { statusMap[r.student_id] = r.status; });
+    }
+
+    async function mark(studentId, status, box) {
+      box.disabled = true;
+      const { error } = await client.rpc('mark_attendance', {
+        p_roll_call_id: rollCall.id,
+        p_student_id: studentId,
+        p_status: status
+      });
+      if (error) alert('標記失敗:' + error.message);
+      await loadAttendance();
+      renderRows(lastPhase);
+    }
+
+    async function finalize() {
+      const { error } = await client.rpc('finalize_roll_call', { p_roll_call_id: rollCall.id });
+      if (error) {
+        alert('結算失敗:' + error.message);
+        return;
+      }
+      await loadAttendance();
+      renderRows('closed');
+    }
+
+    async function tick() {
+      if (!rollCall) return;
+      const minutes = elapsedMin();
+      const phase = getPhase(minutes);
+
+      if (phase !== lastPhase) {
+        lastPhase = phase;
+        renderRows(phase);
+      }
+
+      if (phase === 'closed') {
+        statusEl.className = 'roll-status closed';
+        statusEl.textContent = PHASE_TEXT.closed;
+        if (!finalizing) {
+          finalizing = true;
+          stopTimer();
+          await finalize();
+        }
+        return;
+      }
+
+      statusEl.className = 'roll-status';
+      statusEl.textContent = PHASE_TEXT[phase] + '(本階段剩 ' + fmt((PHASE_END[phase] - minutes) * 60) + ')';
+    }
+
+    async function openRollCall(rc) {
+      rollCall = rc;
+      const { data, error } = await client
+        .from('students')
+        .select('id, student_no, name')
+        .eq('class_id', rc.class_id)
+        .eq('is_active', true)
+        .order('student_no');
+
+      if (error) {
+        startMsg.textContent = '讀取學生名單失敗。';
+        return;
+      }
+
+      students = data;
+      await loadAttendance();
+      rollPanel.hidden = false;
+      lastPhase = null;
+      finalizing = false;
+      stopTimer();
+      tick();
+      timerId = setInterval(tick, 1000);
+    }
+
+    async function checkExisting() {
+      stopTimer();
+      rollCall = null;
+      rollPanel.hidden = true;
+      startMsg.textContent = '';
+
+      const classId = classSelect.value;
+      const subject = subjectSelect.value;
+      if (!classId || !subject) return;
+
+      const today = new Date(nowMs() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+      const { data } = await client
+        .from('roll_calls')
+        .select('id, class_id, subject, class_date, started_at')
+        .eq('class_id', classId)
+        .eq('subject', subject)
+        .eq('class_date', today)
+        .maybeSingle();
+
+      if (data) openRollCall(data);
+    }
+
+    startBtn.addEventListener('click', async () => {
+      const classId = classSelect.value;
+      const subject = subjectSelect.value;
+      if (!classId || !subject) {
+        startMsg.textContent = '請先選擇班級與科目。';
+        return;
+      }
+
+      startMsg.textContent = '';
+      startBtn.disabled = true;
+      await syncClock();
+
+      const { data: id, error } = await client.rpc('start_roll_call', {
+        p_class_id: classId,
+        p_subject: subject
+      });
+      startBtn.disabled = false;
+
+      if (error) {
+        startMsg.textContent = '無法開始點名:' + error.message;
+        return;
+      }
+
+      const { data: rc } = await client
+        .from('roll_calls')
+        .select('id, class_id, subject, class_date, started_at')
+        .eq('id', id)
+        .single();
+
+      if (rc) openRollCall(rc);
+    });
+
+    classSelect.addEventListener('change', checkExisting);
+    subjectSelect.addEventListener('change', checkExisting);
+
+    async function loadClasses() {
+      const { data } = await client.from('classes').select('id, name').order('name');
+      (data || []).forEach((c) => {
+        const option = document.createElement('option');
+        option.value = c.id;
+        option.textContent = c.name;
+        classSelect.appendChild(option);
+      });
+    }
+
+    async function loadMyRecords() {
+      myListEl.replaceChildren(el('p', 'empty', '載入中…'));
+
+      const { data, error } = await client
+        .from('attendance')
+        .select('subject, class_date, status')
+        .order('class_date', { ascending: false });
+
+      if (error) {
+        myListEl.replaceChildren(el('p', 'empty', '讀取失敗,請稍後再試。'));
+        return;
+      }
+      if (!data.length) {
+        myListEl.replaceChildren(el('p', 'empty', '目前沒有點名紀錄。'));
+        return;
+      }
+
+      myListEl.replaceChildren(...data.map((r) => {
+        const card = el('div', 'leave-card');
+        const top = el('div', 'leave-top');
+        top.appendChild(el('span', 'leave-student', r.subject));
+        top.appendChild(el('span', 'badge ' + (BADGE[r.status] || ''), STATUS_LABEL[r.status] || r.status));
+        card.appendChild(top);
+        card.appendChild(el('div', 'leave-meta', r.class_date));
+        return card;
+      }));
+    }
+
+    async function init() {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session) {
+        loginNotice.hidden = false;
+        return;
+      }
+
+      const { data: adminFlag } = await client.rpc('is_admin');
+      isAdmin = adminFlag === true;
+
+      if (isAdmin) {
+        await syncClock();
+        adminSection.hidden = false;
+        loadClasses();
+        return;
+      }
+
+      const { data: me } = await client
+        .from('students')
+        .select('id')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+
+      if (!me) {
+        noStudentNotice.hidden = false;
+        return;
+      }
+
+      mySection.hidden = false;
+      loadMyRecords();
+    }
+
+    init();
   </script>
 </body>
 </html>
