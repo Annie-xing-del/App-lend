@@ -373,6 +373,33 @@ body {
   color: #1d4ed8;
 }
 
+a.subject {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.subject:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.muted {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.my-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e2e5ea;
+  border-radius: 12px;
+  font-weight: 600;
+}
 @media (max-width: 380px) {
   .nav-list a {
     font-size: 0.85rem;
